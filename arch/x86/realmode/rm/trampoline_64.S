@@ -43,6 +43,11 @@ ENTRY(trampoline_start)
 	cli			# We should be safe anyway
 	wbinvd
 
+	# Only here in RM code on AMD platforms post SKINIT launch
+#ifdef CONFIG_SECURE_LAUNCH_STUB
+	stgi
+#endif
+
 	LJMPW_RM(1f)
 1:
 	mov	%cs, %ax	# Code and data in the same place

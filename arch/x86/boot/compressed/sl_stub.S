@@ -161,8 +161,15 @@ ENTRY(sl_stub)
 	jmp	.Lcpu_setup_done
 
 .Ldo_amd:
-	/* AMD is not yet supported */
-	ud2
+	/* Know it is AMD */
+	movl	$(SL_CPU_AMD), sl_cpu_type(%ebp)
+
+	/*
+	 * Disable maskable interrups in EFLAGS then enable global interrupts
+	 * including SMI and NMI (GIF).
+	 */
+	cli
+	stgi
 
 	/* On AMD %esi is set up by the Landing Zone, just go on */
 
