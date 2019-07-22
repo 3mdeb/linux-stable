@@ -54,6 +54,11 @@ static void sl_txt_reset(u64 error)
 		__asm__ __volatile__ ("pause");
 }
 
+static void sl_skinit_reset(void)
+{
+	/* TODO not sure what else to do here. Is there an error reg */
+	__asm__ __volatile__ ("ud2");
+}
 static u64 sl_rdmsr(u32 reg)
 {
 	u64 lo, hi;
