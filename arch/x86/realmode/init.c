@@ -9,11 +9,35 @@
 #include <asm/realmode.h>
 #include <asm/tlbflush.h>
 
+#ifdef CONFIG_AMD_DEV
+#include <asm/setup.h>
+#include <asm/slaunch.h>
+#include <asm/amd_dev.h>
+#endif
+
 struct real_mode_header *real_mode_header;
 u32 *trampoline_cr4_features;
 
 /* Hold the pgd entry used on booting additional CPUs */
 pgd_t trampoline_pgd_entry;
+
+#ifdef CONFIG_AMD_DEV
+void __init setup_amd_dev(phys_addr_t mem, size_t size)
+{
+	void *lz;
+	void *dev_map;
+
+	/* Locate the dev map in the LZ */
+	lz = __va(boot_params.hdr.code32_start +
+		boot_params.hdr.slaunch_header +
+		SKINIT_LZ_OFFSET);
+	dev_map = __va((u64)(*(u32*)lz)) + SKINIT_DEV_MAP_OFFSET;
+
+	/* DEV protect this region before use*/
+	/* TODO the dev code needs to be fixed to use 64b addresses */
+	amd_dev_protect_pages(0, mem, size, (u32)(u64)dev_map);
+}
+#endif
 
 void __init set_real_mode_mem(phys_addr_t mem, size_t size)
 {
@@ -42,6 +66,9 @@ void __init reserve_real_mode(void)
 	}
 
 	memblock_reserve(mem, size);
+#ifdef CONFIG_AMD_DEV
+	setup_amd_dev(mem, size);
+#endif
 	set_real_mode_mem(mem, size);
 }
 

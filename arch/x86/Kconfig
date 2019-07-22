@@ -1943,6 +1943,14 @@ config EFI_MIXED
 
 	   If unsure, say N.
 
+config SECURE_LAUNCH_STUB
+	bool "Secure Launch stub support"
+	depends on X86_64
+	select AMD_DEV
+	---help---
+	  This kernel feature allows a bzImage to be loaded directly
+	  through Intel TXT or AMD SKINIT measured launch.
+
 config SECCOMP
 	def_bool y
 	prompt "Enable seccomp to safely compute untrusted bytecode"
@@ -2801,6 +2809,10 @@ config TS5500
 endif # X86_32
 
 config AMD_NB
+	def_bool y
+	depends on CPU_SUP_AMD && PCI
+
+config AMD_DEV
 	def_bool y
 	depends on CPU_SUP_AMD && PCI
 

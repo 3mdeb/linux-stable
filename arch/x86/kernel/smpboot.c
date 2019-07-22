@@ -81,6 +81,7 @@
 #include <asm/cpu_device_id.h>
 #include <asm/spec-ctrl.h>
 #include <asm/hw_irq.h>
+#include <asm/slaunch.h>
 
 /* representing HT siblings of each logical CPU */
 DEFINE_PER_CPU_READ_MOSTLY(cpumask_var_t, cpu_sibling_map);
@@ -954,6 +955,74 @@ void common_cpu_up(unsigned int cpu, struct task_struct *idle)
 #endif
 }
 
+#ifdef CONFIG_SECURE_LAUNCH_STUB
+static atomic_t first_ap_only;
+
+static int
+slaunch_fixup_jump_vector(void)
+{
+	void __iomem *txt_heap;
+	uint32_t ap_jmp_vector;
+	uint32_t *ap_jmp_ptr;
+
+	if (atomic_read(&first_ap_only) == 1)
+		return 0;
+
+	atomic_set(&first_ap_only, 1);
+
+	txt_heap = txt_early_get_heap_table(TXT_OS_MLE_DATA_TABLE,
+					    TXT_OS_MLE_AP_PM_ENTRY + 4);
+	if (unlikely(!txt_heap)) {
+		printk(KERN_ERR
+		       "Error SMP early_ioremap of TXT OS-SINIT heap\n");
+		return -1;
+	}
+
+	ap_jmp_vector = readl(txt_heap + TXT_OS_MLE_AP_PM_ENTRY);
+	early_iounmap(txt_heap, TXT_OS_MLE_AP_PM_ENTRY + 4);
+
+	ap_jmp_ptr = (uint32_t*)__va(ap_jmp_vector);
+	*ap_jmp_ptr = real_mode_header->sl_trampoline_start32;
+
+	return 0;
+}
+
+static int
+slaunch_wakeup_cpu_from_txt(int cpu, int apicid)
+{
+	unsigned long send_status = 0, accept_status = 0;
+
+	/* Only done once */
+	if (slaunch_fixup_jump_vector())
+		return -1;
+
+	/* Send NMI IPI to idling AP and wake it up */
+	apic_icr_write(APIC_DM_NMI, apicid);
+
+	if (init_udelay == 0)
+		udelay(10);
+	else
+		udelay(300);
+
+	send_status = safe_apic_wait_icr_idle();
+
+	if (init_udelay == 0)
+		udelay(10);
+	else
+		udelay(300);
+
+	accept_status = (apic_read(APIC_ESR) & 0xEF);
+
+	if (send_status)
+		pr_err("Secure Launch IPI never delivered???\n");
+	if (accept_status)
+		pr_err("Secure Launch IPI delivery error (%lx)\n",
+			accept_status);
+
+	return (send_status | accept_status);
+}
+#endif
+
 /*
  * NOTE - on most systems this is a PHYSICAL apic ID, but on multiquad
  * (ie clustered apic addressing mode), this is a LOGICAL apic ID.
@@ -1010,6 +1079,7 @@ static int do_boot_cpu(int apicid, int cpu, struct task_struct *idle,
 	cpumask_clear_cpu(cpu, cpu_initialized_mask);
 	smp_mb();
 
+#ifndef CONFIG_SECURE_LAUNCH_STUB
 	/*
 	 * Wake up a CPU in difference cases:
 	 * - Use the method in the APIC driver if it's defined
@@ -1021,6 +1091,19 @@ static int do_boot_cpu(int apicid, int cpu, struct task_struct *idle,
 	else
 		boot_error = wakeup_cpu_via_init_nmi(cpu, start_ip, apicid,
 						     cpu0_nmi_registered);
+#else
+	/*
+	 * Custom APIC driver configuration is not currently supported on AMD
+	 * and on Intel the startup is totally different.
+	 */
+	if (slaunch_get_flags() & SL_FLAG_ARCH_SKINIT)
+		boot_error = wakeup_cpu_via_init_nmi(cpu, start_ip, apicid,
+						     cpu0_nmi_registered);
+	else if (slaunch_get_flags() & SL_FLAG_ARCH_TXT)
+		boot_error = slaunch_wakeup_cpu_from_txt(cpu, apicid);
+	else
+		BUG();
+#endif
 
 	if (!boot_error) {
 		/*

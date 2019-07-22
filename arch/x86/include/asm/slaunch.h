@@ -1,0 +1,193 @@
+/* SPDX-License-Identifier: GPL-2.0 */
+#ifndef _ASM_X86_SLAUNCH_H
+#define _ASM_X86_SLAUNCH_H
+
+/*
+ * Secure Launch main definitions file.
+ *
+ * Copyright (c) 2019 Oracle and/or its affiliates. All rights reserved.
+ */
+
+#define __SL32_CS	0x0008
+#define __SL32_DS	0x0010
+
+#define SL_CPU_AMD		1
+#define SL_CPU_INTEL		2
+
+#define TXT_X86_GETSEC_SMCTRL	7
+#define TXT_X86_GETSEC_WAKEUP	8
+
+#define TXT_PUB_CONFIG_REGS_BASE	0xfed30000
+#define TXT_PRIV_CONFIG_REGS_BASE	0xfed20000
+#define TXT_NR_CONFIG_PAGES     ((TXT_PUB_CONFIG_REGS_BASE - \
+				  TXT_PRIV_CONFIG_REGS_BASE) >> PAGE_SHIFT)
+
+#define TXTCR_STS			0x0000
+#define TXTCR_ESTS			0x0008
+#define TXTCR_ERRORCODE			0x0030
+#define TXTCR_CMD_RESET			0x0038
+#define TXTCR_DIDVID			0x0110
+#define TXTCR_CMD_UNLOCK_MEM_CONFIG	0x0218
+#define TXTCR_MLE_JOIN			0x0290
+#define TXTCR_HEAP_BASE			0x0300
+#define TXTCR_HEAP_SIZE			0x0308
+#define TXTCR_CMD_OPEN_LOCALITY1	0x0380
+#define TXTCR_CMD_CLOSE_LOCALITY1	0x0388
+#define TXTCR_CMD_OPEN_LOCALITY2	0x0390
+#define TXTCR_CMD_CLOSE_LOCALITY2	0x0398
+#define TXTCR_CMD_SECRETS		0x08e0
+#define TXTCR_CMD_NO_SECRETS		0x08e8
+#define TXTCR_E2STS			0x08f0
+
+#define TXT_CAP_RLP_WAKE_GETSEC		0
+#define TXT_CAP_RLP_WAKE_MONITOR	1
+
+#define TXT_MAX_EVENT_LOG_SIZE		(5*4*1024)   /* 4k*5 */
+#define TXT_MAX_VARIABLE_MTRRS		32
+#define TXT_OS_MLE_STRUCT_VERSION	1
+
+#define TXT_BIOS_DATA_TABLE		1
+#define TXT_OS_MLE_DATA_TABLE		2
+#define TXT_OS_SINIT_DATA_TABLE		3
+#define TXT_SINIT_MLE_DATA_TABLE	4
+
+#define TXT_BIOS_NUM_LOG_PROCS		0x18
+#define TXT_OS_MLE_VERSION		0x0
+#define TXT_OS_MLE_ZERO_PAGE_ADDR	0x4
+#define TXT_OS_MLE_MISC_EN_MSR		0x1c
+#define TXT_OS_MLE_MTRR_STATE		0x24
+#define TXT_OS_MLE_AP_WAKE_EBP		0x23c
+#define TXT_OS_MLE_AP_PM_ENTRY		0x244
+#define TXT_OS_SINIT_CAPABILITIES	0x50
+#define TXT_SINIT_MLE_RLP_WAKEUP_ADDR	0x78
+#define TXT_SINIT_MLE_DMAR_TABLE_SIZE	0x88
+#define TXT_SINIT_MLE_DMAR_TABLE_OFFSET	0x8c
+
+#define TXT_SINIT_CAPS_WAKE_GETSEC	0
+#define TXT_SINIT_CAPS_WAKE_MONITOR	1
+
+#define TXT_SLERROR_GENERIC		0xc0008001
+#define TXT_SLERROR_TPM_INIT		0xc0008002
+#define TXT_SLERROR_TPM_GET_LOC		0xc0008003
+#define TXT_SLERROR_TPM_EXTEND		0xc0008004
+#define TXT_SLERROR_MTRR_INV_VCNT	0xc0008005
+#define TXT_SLERROR_MTRR_INV_DEF_TYPE	0xc0008006
+#define TXT_SLERROR_MTRR_INV_BASE	0xc0008007
+#define TXT_SLERROR_MTRR_INV_MASK	0xc0008008
+#define TXT_SLERROR_MSR_INV_MISC_EN	0xc0008009
+#define TXT_SLERROR_INV_AP_INTERRUPT	0xc000800a
+
+#define TXT_MAX_CPUS			512
+#define TXT_BOOT_STACK_SIZE		24
+
+#define SKINIT_LZ_OFFSET		28
+#define SKINIT_DEV_MAP_OFFSET		0x7000
+
+#define SLAUNCH_INFO_OFFSET	0x268
+
+#define SL_FLAG_ACTIVE		0x00000001
+#define SL_FLAG_ARCH_SKINIT	0x00000002
+#define SL_FLAG_ARCH_TXT	0x00000004
+
+#define MTRRphysBase0		0x200
+
+#ifndef __ASSEMBLY__
+
+struct txt_mle_join {
+	u32	gdt_limit;
+	u32	gdt_base;
+	u32	seg_sel;               /* cs (ds, es, ss are seg_sel+8) */
+	u32	entry_point;           /* phys addr */
+} __attribute__((packed));
+
+struct txt_mtrr_pair {
+	u64	mtrr_physbase;
+	u64	mtrr_physmask;
+} __attribute__((packed));
+
+struct txt_mtrr_state {
+	u64	default_type_reg;
+	u64	mtrr_vcnt;
+	struct txt_mtrr_pair mtrr_pair[TXT_MAX_VARIABLE_MTRRS];
+} __attribute__((packed));
+
+struct txt_os_mle_data {
+	u32	version;
+	u32	zero_page_addr;
+	u8	msb_key_hash[20];
+	u64	saved_misc_enable_msr;
+	struct	txt_mtrr_state saved_bsp_mtrrs;
+	u64	lo_pmr_min;
+	u64	ap_wake_ebp;
+	u64	ap_pm_entry;
+	u8	event_log_buffer[TXT_MAX_EVENT_LOG_SIZE];
+} __attribute__((packed));
+
+#include <asm/io.h>
+
+static inline u64 txt_bios_data_size(void __iomem *heap)
+{
+	u64 val;
+
+	memcpy_fromio(&val, heap, sizeof(u64));
+	return val;
+}
+
+static inline void __iomem *txt_bios_data_start(void __iomem *heap)
+{
+	return heap + sizeof(u64);
+}
+
+static inline u64 txt_os_mle_data_size(void __iomem *heap)
+{
+	u64 val;
+
+	memcpy_fromio(&val, heap + txt_bios_data_size(heap), sizeof(u64));
+	return val;
+}
+
+static inline void __iomem *txt_os_mle_data_start(void __iomem *heap)
+{
+	return heap + txt_bios_data_size(heap) + sizeof(u64);
+}
+
+static inline u64 txt_os_sinit_data_size(void __iomem *heap)
+{
+	u64 val;
+
+	memcpy_fromio(&val, heap + txt_bios_data_size(heap) +
+			txt_os_mle_data_size(heap), sizeof(u64));
+	return val;
+}
+
+static inline void __iomem *txt_os_sinit_data_start(void __iomem *heap)
+{
+	return heap + txt_bios_data_size(heap) +
+		txt_os_mle_data_size(heap) + sizeof(u64);
+}
+
+static inline u64 txt_sinit_mle_data_size(void __iomem *heap)
+{
+	u64 val;
+
+	memcpy_fromio(&val, heap + txt_bios_data_size(heap) +
+			txt_os_mle_data_size(heap) +
+			txt_os_sinit_data_size(heap), sizeof(u64));
+	return val;
+}
+
+static inline void __iomem *txt_sinit_mle_data_start(void __iomem *heap)
+{
+	return heap + txt_bios_data_size(heap) +
+		txt_os_mle_data_size(heap) +
+		txt_sinit_mle_data_size(heap) + sizeof(u64);
+}
+
+void slaunch_setup(void);
+u32 slaunch_get_flags(void);
+void __iomem *txt_early_get_heap_table(u32 type, u32 bytes);
+struct acpi_table_header *slaunch_get_dmar_table(struct acpi_table_header *dmar);
+
+#endif
+
+#endif /* _ASM_X86_SLAUNCH_H */
