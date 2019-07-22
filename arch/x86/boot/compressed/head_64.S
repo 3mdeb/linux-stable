@@ -250,6 +250,7 @@ ENDPROC(efi32_stub_entry)
 
 #ifdef CONFIG_SECURE_LAUNCH_STUB
 ENTRY(sl_stub_entry)
+	call print_debug_chars_inl
 	/*
 	 * On entry, %ebx has the entry abs offset to sl_stub_entry. To
 	 * find the beginning of where we are loaded, sub off from the
@@ -266,6 +267,7 @@ ENDPROC(sl_stub_entry)
 	.code64
 	.org 0x200
 ENTRY(startup_64)
+	call print_debug_chars_inl
 	/*
 	 * 64bit entry is 0x200 and it is ABI so immutable!
 	 * We come here either from startup_32 or directly from a
