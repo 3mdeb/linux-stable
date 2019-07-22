@@ -159,19 +159,29 @@ void sl_main(u8 *bootparams)
 	 * also indicates that the kernel was booted successfully through the Secure
 	 * Launch entry point and is in SMX mode.
 	 */
+	/*
 	if (!(sl_cpu_type & SL_CPU_INTEL))
 		return;
+		*/
 
 	/*
 	 * If enable_tpm fails there is no point going on. The entire secure
 	 * environment depends on this and the other TPM operations succeeding.
 	 */
 	tpm = enable_tpm();
-	if (!tpm)
-		sl_txt_reset(TXT_SLERROR_TPM_INIT);
+	if (!tpm) {
+		if (sl_cpu_type == SL_CPU_INTEL)
+			sl_txt_reset(TXT_SLERROR_TPM_INIT);
+		else
+			sl_skinit_reset();
+	}
 
-	if (tpm_request_locality(tpm, 2) == TPM_NO_LOCALITY)
-		sl_txt_reset(TXT_SLERROR_TPM_GET_LOC);
+	if (tpm_request_locality(tpm, 2) == TPM_NO_LOCALITY) {
+		if (sl_cpu_type == SL_CPU_INTEL)
+			sl_txt_reset(TXT_SLERROR_TPM_GET_LOC);
+		else
+			sl_skinit_reset();
+	}
 
 	/* Measure the zero page/boot params */
 	sl_tpm_extend_pcr(tpm, SL_CONFIG_PCR18, bootparams, PAGE_SIZE);
@@ -189,6 +199,7 @@ void sl_main(u8 *bootparams)
 		sl_tpm_extend_pcr(tpm, SL_IMAGE_PCR17,
 				  (u8 *)((u64)bp->hdr.ramdisk_image),
 				  bp->hdr.ramdisk_size);
+	if (sl_cpu_type == SL_CPU_INTEL) {
 	/*
 	 * Some extra work to do on Intel, have to measure the OS-MLE
 	 * heap area.
@@ -207,6 +218,7 @@ void sl_main(u8 *bootparams)
 	 * misc enable MSRs are what we expect.
 	 */
 	sl_txt_validate_msrs(os_mle_data);
+	}
 
 	tpm_relinquish_locality(tpm);
 	free_tpm(tpm);
