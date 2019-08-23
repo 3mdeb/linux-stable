@@ -114,8 +114,12 @@ void sl_tpm_extend_pcr(struct tpm *tpm, u32 pcr, const u8 *data, u32 len)
 	early_sha1_finalize(&sctx);
 	early_sha1_finish(&sctx, &sha1_hash[0]);
 	ret = tpm_extend_pcr(tpm, pcr, TPM_HASH_ALG_SHA1, &sha1_hash[0]);
-	if (ret)
-		sl_txt_reset(TXT_SLERROR_TPM_EXTEND);
+	if (ret) {
+		if (sl_cpu_type == SL_CPU_INTEL)
+			sl_txt_reset(TXT_SLERROR_TPM_EXTEND);
+		else
+			sl_skinit_reset();
+	}
 }
 
 void print_debug_chars_inl(void)

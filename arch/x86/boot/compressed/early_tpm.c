@@ -24,6 +24,67 @@ static u8 locality = TPM_NO_LOCALITY;
 #define TPM_CRB_DATA_BUFFER_OFFSET	0x80
 #define TPM_CRB_DATA_BUFFER_SIZE	3966
 
+/*
+ * Durations derived from Table 15 of the PTP but is purely an artifact of this
+ * implementation.
+ */
+
+static void print_char(char c)
+{
+	asm volatile("	movw	$0x3fd, %%dx\n\
+1:\n\
+	inb	%%dx, %%al\n\
+	testb	$0x20, %%al\n\
+	jz	1b\n\
+	movw	$0x3f8, %%dx\n\
+	movb	%0, %%al\n\
+	outb	%%al, %%dx" : : "rmI"(c) : "eax","edx","memory");
+}
+
+/* TPM Duration A: 20ms */
+static void duration_a(void)
+{
+	tpm_udelay(20000);
+}
+
+/* TPM Duration B: 750ms */
+static void duration_b(void)
+{
+	tpm_udelay(750000);
+}
+
+/* TPM Duration C: 1000ms */
+static void duration_c(void)
+{
+	tpm_udelay(1000000);
+}
+
+/* Timeouts defined in Table 16 of the PTP */
+
+/* TPM Timeout A: 750ms */
+static void timeout_a(void)
+{
+	tpm_udelay(750000);
+}
+
+/* TPM Timeout B: 2000ms */
+static void timeout_b(void)
+{
+	tpm_udelay(2000000);
+}
+
+/* TPM Timeout C: 200ms */
+static void timeout_c(void)
+{
+	tpm_udelay(200000);
+}
+
+/* TPM Timeout D: 30ms */
+static void timeout_d(void)
+{
+	tpm_udelay(30000);
+}
+
 u8 *tpmb_reserve(struct tpmbuff *b)
 {
 	if (b->locked)
@@ -225,26 +286,35 @@ void tis_relinquish_locality(void)
 
 s8 tis_request_locality(u8 l)
 {
+	print_char('0');
 	if (l > TPM_MAX_LOCALITY)
 		return -EINVAL;
 
+	print_char('1');
 	if (l == locality)
 		return 0;
 
+	print_char('2');
 	tis_relinquish_locality();
 
 	tpm_write8(ACCESS_REQUEST_USE, ACCESS(l));
 
+	print_char('3');
 	/* wait for locality to be granted */
 	if (tpm_read8(ACCESS(l)) & ACCESS_ACTIVE_LOCALITY)
 		locality = l;
 
+	print_char('4');
 	return 0;
 }
 
 u8 tis_init(struct tpm *t)
 {
 	u8 i;
+
+	print_char('\r');
+	print_char('\n');
+	print_char('I');
 
 	for (i = 0; i <= TPM_MAX_LOCALITY; i++)
 		tpm_write8(ACCESS_RELINQUISH_LOCALITY, ACCESS(i));
@@ -258,6 +328,7 @@ u8 tis_init(struct tpm *t)
 	if ((t->vendor & 0xFFFF) == 0xFFFF)
 		return 0;
 
+	print_char('+');
 	return 1;
 }
 
@@ -267,16 +338,26 @@ size_t tis_send(struct tpmbuff *buf)
 	u32 burstcnt = 0;
 	u32 count = 0;
 
+	print_char('\r');
+	print_char('\n');
+	print_char('S');
+
 	if (locality > TPM_MAX_LOCALITY)
 		return 0;
 
-	tpm_write8(STS_COMMAND_READY, STS(locality));
+	print_char('1');
+
+	for (status = 0; (status & STS_COMMAND_READY) == 0; ) {
+		tpm_write8(STS_COMMAND_READY, STS(locality));
+		status = tpm_read8(STS(locality));
+	}
 
 	buf_ptr = buf->head;
 
 	/* send all but the last byte */
 	while (count < (buf->len - 1)) {
 		burstcnt = burst_wait();
+		print_char('.');
 		for (; burstcnt > 0 && count < (buf->len - 1); burstcnt--) {
 			tpm_write8(buf_ptr[count], DATA_FIFO(locality));
 			count++;
@@ -288,6 +369,7 @@ size_t tis_send(struct tpmbuff *buf)
 
 		if ((status & STS_DATA_EXPECT) == 0)
 			return 0;
+		print_char(':');
 	}
 
 	/* write last byte */
@@ -298,9 +380,13 @@ size_t tis_send(struct tpmbuff *buf)
 	for (status = 0; (status & STS_VALID) == 0; )
 		status = tpm_read8(STS(locality));
 
+	print_char('2');
+
 	if ((status & STS_DATA_EXPECT) != 0)
 		return 0;
 
+
+	print_char('+');
 	/* go and do it */
 	tpm_write8(STS_GO, STS(locality));
 
@@ -337,8 +423,11 @@ size_t tis_recv(struct tpmbuff *buf)
 		goto err;
 
 	/* ensure that there is data available */
-	if (!tis_data_available(locality))
-		goto err;
+	if (!tis_data_available(locality)) {
+		timeout_d();
+		if (!tis_data_available(locality))
+			goto err;
+	}
 
 	/* read header */
 	hdr = (struct tpm_header *)buf->head;
@@ -471,55 +560,6 @@ struct tpm_crb_intf_id_ext {
 		};
 	};
 } __packed;
-
-/*
- * Durations derived from Table 15 of the PTP but is purely an artifact of this
- * implementation.
- */
-
-/* TPM Duration A: 20ms */
-static void duration_a(void)
-{
-	tpm_udelay(20);
-}
-
-/* TPM Duration B: 750ms */
-static void duration_b(void)
-{
-	tpm_udelay(750);
-}
-
-/* TPM Duration C: 1000ms */
-static void duration_c(void)
-{
-	tpm_udelay(1000);
-}
-
-/* Timeouts defined in Table 16 of the PTP */
-
-/* TPM Timeout A: 750ms */
-static void timeout_a(void)
-{
-	tpm_udelay(750);
-}
-
-/* TPM Timeout B: 2000ms */
-static void timeout_b(void)
-{
-	tpm_udelay(2000);
-}
-
-/* TPM Timeout C: 200ms */
-static void timeout_c(void)
-{
-	tpm_udelay(200);
-}
-
-/* TPM Timeout D: 30ms */
-static void timeout_d(void)
-{
-	tpm_udelay(30);
-}
 
 static u8 is_idle(void)
 {
@@ -819,7 +859,7 @@ static int tpm2_alloc_cmd(struct tpmbuff *b, struct tpm2_cmd *c, u16 tag,
 static u16 convert_digest_list(struct tpml_digest_values *digests)
 {
 	int i;
-	u16 size = 0;
+	u16 size = sizeof(digests->count);
 	struct tpmt_ha *h = digests->digests;
 
 	for (i = 0; i < digests->count; i++) {
@@ -854,6 +894,8 @@ static u16 convert_digest_list(struct tpml_digest_values *digests)
 		}
 	}
 
+	digests->count = cpu_to_be32(digests->count);
+
 	return size;
 }
 
@@ -866,42 +908,56 @@ int tpm2_extend_pcr(struct tpm *t, u32 pcr,
 	u16 size;
 	int ret = 0;
 
+	print_char('\r');
+	print_char('\n');
+	print_char('X');
+
+	b = alloc_tpmbuff(t->intf, locality);
+
 	ret = tpm2_alloc_cmd(b, &cmd, TPM_ST_SESSIONS, TPM_CC_PCR_EXTEND);
 	if (ret < 0)
 		return ret;
 
-	cmd.handles = (u32 *)tpmb_put(b, sizeof(u32));
+	print_char('1');
+	cmd.handles = (u32 *)tpmb_put(b, 2*sizeof(u32));
 	if (cmd.handles == NULL) {
 		tpmb_free(b);
+		free_tpmbuff(b, t->intf);
 		return -ENOMEM;
 	}
 
-	*cmd.handles = cpu_to_be32(pcr);
+	print_char('2');
+	cmd.handles[0] = cpu_to_be32(pcr);
 
-	cmd.auth = (struct tpm2b *)tpmb_put(b, tpm2_null_auth_size());
+	cmd.auth = tpmb_put(b, tpm2_null_auth_size());
 	if (cmd.auth == NULL) {
 		tpmb_free(b);
+		free_tpmbuff(b, t->intf);
 		return -ENOMEM;
 	}
 
-	cmd.auth->size = tpm2_null_auth(cmd.auth->buffer);
-	cmd.auth->size = cpu_to_be16(cmd.auth->size);
+	print_char('3');
+	cmd.handles[1] = cpu_to_be32(tpm2_null_auth(cmd.auth));
 
 	size = convert_digest_list(digests);
 	if (size == 0) {
 		tpmb_free(b);
+		free_tpmbuff(b, t->intf);
 		return -EINVAL;
 	}
 
+	print_char('4');
 	cmd.params = (u8 *)tpmb_put(b, size);
 	if (cmd.params == NULL) {
 		tpmb_free(b);
+		free_tpmbuff(b, t->intf);
 		return -ENOMEM;
 	}
 
+	print_char('5');
 	memcpy(cmd.params, digests, size);
 
-	cmd.header->size = cpu_to_be16(tpmb_size(b));
+	cmd.header->size = cpu_to_be32(tpmb_size(b));
 
 	switch (t->intf) {
 	case TPM_DEVNODE:
@@ -919,6 +975,9 @@ int tpm2_extend_pcr(struct tpm *t, u32 pcr,
 	}
 
 	tpmb_free(b);
+	print_char('x');
+	free_tpmbuff(b, t->intf);
+	print_char('+');
 	return ret;
 }
 
@@ -961,10 +1020,12 @@ struct tpm *enable_tpm(void)
 		/* Not implemented yet */
 		break;
 	case TPM_TIS:
+		print_char('T');
 		if (!tis_init(t))
 			goto err;
 		break;
 	case TPM_CRB:
+		print_char('C');
 		if (!crb_init(t))
 			goto err;
 		break;
@@ -975,9 +1036,13 @@ struct tpm *enable_tpm(void)
 
 	/* TODO: ACPI TPM discovery */
 
+	print_char('e');
+	print_char('+');
 	return t;
 
 err:
+	print_char('e');
+	print_char('-');
 	return NULL;
 }
 
@@ -985,14 +1050,20 @@ s8 tpm_request_locality(struct tpm *t, u8 l)
 {
 	s8 err = 0;
 
+	print_char('\r');
+	print_char('\n');
+	print_char('L');
+
 	switch (t->intf) {
 	case TPM_DEVNODE:
 		/* Not implemented yet */
 		break;
 	case TPM_TIS:
+		print_char('t');
 		err = tis_request_locality(l);
 		break;
 	case TPM_CRB:
+		print_char('c');
 		err = crb_request_locality(l);
 		break;
 	case TPM_UEFI:
@@ -1000,6 +1071,7 @@ s8 tpm_request_locality(struct tpm *t, u8 l)
 		break;
 	}
 
+	print_char('+');
 	return err;
 }
 
@@ -1027,8 +1099,11 @@ int tpm_extend_pcr(struct tpm *t, u32 pcr, u16 algo,
 {
 	int ret = 0;
 
-	if (t->family == TPM12 ||
-	    (t->family == TPM20 && t->intf == TPM_TIS)) {
+	print_char('\r');
+	print_char('\n');
+	print_char('Q');
+
+	if (t->family == TPM12) {
 		struct tpm_digest d;
 
 		if (algo != TPM_ALG_SHA1) {
@@ -1073,7 +1148,7 @@ int tpm_extend_pcr(struct tpm *t, u32 pcr, u16 algo,
 			goto out;
 		}
 
-		ret = tpm2_extend_pcr(t, pcr, d);
+		ret = !tpm2_extend_pcr(t, pcr, d);
 	} else {
 		ret = -EINVAL;
 	}
