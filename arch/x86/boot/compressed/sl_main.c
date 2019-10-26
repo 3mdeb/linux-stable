@@ -16,10 +16,10 @@
 #include <asm/bootparam.h>
 #include <asm/efi.h>
 #include <asm/slaunch.h>
-#ifdef SECURE_LAUNCH_SHA256
+#ifdef CONFIG_SECURE_LAUNCH_SHA256
 #include <linux/sha256.h>
 #endif
-#ifdef SECURE_LAUNCH_SHA512
+#ifdef CONFIG_SECURE_LAUNCH_SHA512
 #include <linux/sha512.h>
 #endif
 
@@ -119,7 +119,7 @@ void sl_tpm_extend_pcr(struct tpm *tpm, u32 pcr, const u8 *data, u32 len)
 	int ret;
 
 	if (tpm->family == TPM20) {
-#ifdef SECURE_LAUNCH_SHA256
+#ifdef CONFIG_SECURE_LAUNCH_SHA256
 		struct sha256_state sctx = {0};
 		u8 sha256_hash[SHA256_DIGEST_SIZE];
 
@@ -130,7 +130,7 @@ void sl_tpm_extend_pcr(struct tpm *tpm, u32 pcr, const u8 *data, u32 len)
 		ret = tpm_extend_pcr(tpm, pcr, TPM_HASH_ALG_SHA256, &sha256_hash[0]);
 		goto err;
 #endif
-#ifdef SECURE_LAUNCH_SHA512
+#ifdef CONFIG_SECURE_LAUNCH_SHA512
 		struct sha512_state sctx = {0};
 		u8 sha512_hash[SHA512_DIGEST_SIZE];
 
