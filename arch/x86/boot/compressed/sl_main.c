@@ -63,6 +63,12 @@ static void sl_txt_reset(u64 error)
 		__asm__ __volatile__ ("pause");
 }
 
+static void sl_skinit_reset(void)
+{
+	/* TODO not sure what else to do here. Is there an error reg */
+	__asm__ __volatile__ ("ud2");
+}
+
 static u64 sl_rdmsr(u32 reg)
 {
 	u64 lo, hi;
@@ -165,19 +171,29 @@ void sl_main(u8 *bootparams)
 	 * also indicates that the kernel was booted successfully through the Secure
 	 * Launch entry point and is in SMX mode.
 	 */
+	/*
 	if (!(sl_cpu_type & SL_CPU_INTEL))
 		return;
+	*/
 
 	/*
 	 * If enable_tpm fails there is no point going on. The entire secure
 	 * environment depends on this and the other TPM operations succeeding.
 	 */
 	tpm = enable_tpm();
-	if (!tpm)
-		sl_txt_reset(TXT_SLERROR_TPM_INIT);
+	if (!tpm) {
+		if (sl_cpu_type == SL_CPU_INTEL)
+			sl_txt_reset(TXT_SLERROR_TPM_INIT);
+		else
+			sl_skinit_reset();
+	}
 
-	if (tpm_request_locality(tpm, 2) == TPM_NO_LOCALITY)
-		sl_txt_reset(TXT_SLERROR_TPM_GET_LOC);
+	if (tpm_request_locality(tpm, 2) == TPM_NO_LOCALITY) {
+		if (sl_cpu_type == SL_CPU_INTEL)
+			sl_txt_reset(TXT_SLERROR_TPM_GET_LOC);
+		else
+			sl_skinit_reset();
+	}
 
 	/* Measure the zero page/boot params */
 	sl_tpm_extend_pcr(tpm, SL_CONFIG_PCR18, bootparams, PAGE_SIZE);
@@ -222,30 +238,33 @@ void sl_main(u8 *bootparams)
 		sl_tpm_extend_pcr(tpm, SL_IMAGE_PCR17,
 				  (u8 *)((u64)bp->hdr.ramdisk_image),
 				  bp->hdr.ramdisk_size);
-	/*
-	 * Some extra work to do on Intel, have to measure the OS-MLE
-	 * heap area.
-	 */
-	txt_heap = (void *)sl_txt_read(TXTCR_HEAP_BASE);
-	bios_data_size = *txt_heap;
-	os_mle_data = (struct txt_os_mle_data *)
-			((u8 *)txt_heap + bios_data_size + sizeof(u64));
 
-	/*
-	 * Don't want to measure the value of the ap_wake_ebp field,
-	 * it only used by sl_stub
-	 */
-	os_mle_data->ap_wake_ebp = 0;
+	if (sl_cpu_type == SL_CPU_INTEL) {
+		/*
+		* Some extra work to do on Intel, have to measure the OS-MLE
+		* heap area.
+		*/
+		txt_heap = (void *)sl_txt_read(TXTCR_HEAP_BASE);
+		bios_data_size = *txt_heap;
+		os_mle_data = (struct txt_os_mle_data *)
+				((u8 *)txt_heap + bios_data_size + sizeof(u64));
 
-	/* Measure OS-MLE data up to the TPM log into 18 */
-	os_mle_len = offsetof(struct txt_os_mle_data, event_log_buffer);
-	sl_tpm_extend_pcr(tpm, SL_CONFIG_PCR18, (u8 *)os_mle_data, os_mle_len);
+		/*
+		* Don't want to measure the value of the ap_wake_ebp field,
+		* it only used by sl_stub
+		*/
+		os_mle_data->ap_wake_ebp = 0;
 
-	/*
-	 * Now that the OS-MLE data is measured, ensure the MTRR and
-	 * misc enable MSRs are what we expect.
-	 */
-	sl_txt_validate_msrs(os_mle_data);
+		/* Measure OS-MLE data up to the TPM log into 18 */
+		os_mle_len = offsetof(struct txt_os_mle_data, event_log_buffer);
+		sl_tpm_extend_pcr(tpm, SL_CONFIG_PCR18, (u8 *)os_mle_data, os_mle_len);
+
+		/*
+		* Now that the OS-MLE data is measured, ensure the MTRR and
+		* misc enable MSRs are what we expect.
+		*/
+		sl_txt_validate_msrs(os_mle_data);
+	}
 
 	tpm_relinquish_locality(tpm);
 	free_tpm(tpm);
