@@ -124,7 +124,7 @@ int tpm2_extend_pcr(struct tpm *t, u32 pcr,
 
 	memcpy(cmd.params, digests, size);
 
-	cmd.header->size = cpu_to_be16(tpmb_size(b));
+	cmd.header->size = cpu_to_be32(tpmb_size(b));
 
 	switch (t->intf) {
 	case TPM_DEVNODE:
