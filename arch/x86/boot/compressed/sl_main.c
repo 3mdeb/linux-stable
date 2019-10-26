@@ -120,6 +120,9 @@ static void sl_find_event_log(struct tpm *tpm)
 	void *os_sinit_data;
 	void *txt_heap;
 
+	if (sl_cpu_type == SL_CPU_AMD)
+		return;
+
 	txt_heap = (void *)sl_txt_read(TXT_CR_HEAP_BASE);
 
 	os_mle_data = txt_os_mle_data_start(txt_heap);
@@ -148,6 +151,9 @@ static void sl_tpm12_log_event(u32 pcr, u8 *digest,
 	u32 total_size;
 	u8 log_buf[SL_TPM12_LOG_SIZE];
 
+	if (sl_cpu_type == SL_CPU_AMD)
+		return;
+
 	memset(log_buf, 0, SL_TPM12_LOG_SIZE);
 	pcr_event = (struct tpm12_pcr_event *)log_buf;
 	pcr_event->pcr_index = pcr;
@@ -160,7 +166,7 @@ static void sl_tpm12_log_event(u32 pcr, u8 *digest,
 	total_size = sizeof(struct tpm12_pcr_event) + event_size;
 
 	if (tpm12_log_event(evtlog_base, total_size, pcr_event))
-		sl_txt_reset(SL_ERROR_TPM_LOGGING_FAILED);
+		sl_txt_reset(SL_ERROR_TPM_EXTEND);
 }
 
 static void sl_tpm20_log_event(u32 pcr, u8 *digest, u16 algo,
@@ -173,6 +179,9 @@ static void sl_tpm20_log_event(u32 pcr, u8 *digest, u16 algo,
 	u8 *dptr;
 	u32 total_size;
 	u8 log_buf[SL_TPM20_LOG_SIZE];
+
+	if (sl_cpu_type == SL_CPU_AMD)
+		return;
 
 	memset(log_buf, 0, SL_TPM20_LOG_SIZE);
 	head = (struct tpm20_pcr_event_head *)log_buf;
@@ -236,8 +245,12 @@ void sl_tpm_extend_pcr(struct tpm *tpm, u32 pcr, const u8 *data, u32 length,
 					   TPM_ALG_SHA256,
 					   (const u8 *)desc, strlen(desc));
 			return;
-		} else
-			sl_txt_reset(SL_ERROR_TPM_EXTEND);
+		} else {
+			if (sl_cpu_type == SL_CPU_INTEL)
+				sl_txt_reset(SL_ERROR_TPM_EXTEND);
+			else
+				sl_skinit_reset();
+		}
 #endif
 #ifdef CONFIG_SECURE_LAUNCH_SHA512
 		struct sha512_state sctx = {0};
@@ -252,8 +265,12 @@ void sl_tpm_extend_pcr(struct tpm *tpm, u32 pcr, const u8 *data, u32 length,
 					   TPM_ALG_SHA512,
 					   (const u8 *)desc, strlen(desc));
 			return;
-		} else
-			sl_txt_reset(SL_ERROR_TPM_EXTEND);
+		} else {
+			if (sl_cpu_type == SL_CPU_INTEL)
+				sl_txt_reset(SL_ERROR_TPM_EXTEND);
+			else
+				sl_skinit_reset();
+		}
 #endif
 	}
 
@@ -261,8 +278,12 @@ void sl_tpm_extend_pcr(struct tpm *tpm, u32 pcr, const u8 *data, u32 length,
 	early_sha1_update(&sctx, data, length);
 	early_sha1_final(&sctx, &sha1_hash[0]);
 	ret = tpm_extend_pcr(tpm, pcr, TPM_ALG_SHA1, &sha1_hash[0]);
-	if (ret)
-		sl_txt_reset(SL_ERROR_TPM_EXTEND);
+	if (ret) {
+		if (sl_cpu_type == SL_CPU_INTEL)
+			sl_txt_reset(SL_ERROR_TPM_EXTEND);
+		else
+			sl_skinit_reset();
+	}
 
 	if (tpm->family == TPM20)
 		sl_tpm20_log_event(pcr, &sha1_hash[0], TPM_ALG_SHA1,
