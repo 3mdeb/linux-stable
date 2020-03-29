@@ -318,7 +318,7 @@ void sl_main(u8 *bootparams)
 	tpm = enable_tpm();
 	if (!tpm) {
 		if (sl_cpu_type == SL_CPU_INTEL)
-			sl_txt_reset(TXT_SLERROR_TPM_INIT);
+			sl_txt_reset(SL_ERROR_TPM_INIT);
 		else
 			sl_skinit_reset();
 	}
@@ -328,7 +328,7 @@ void sl_main(u8 *bootparams)
 
 	if (tpm_request_locality(tpm, 2) == TPM_NO_LOCALITY) {
 		if (sl_cpu_type == SL_CPU_INTEL)
-			sl_txt_reset(TXT_SLERROR_TPM_GET_LOC);
+			sl_txt_reset(SL_ERROR_TPM_INIT);
 		else
 			sl_skinit_reset();
 	}
