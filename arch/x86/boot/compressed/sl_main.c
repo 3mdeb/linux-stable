@@ -22,6 +22,7 @@
 #include "tpm/tpm_common.h"
 #include "tpm/tpm2_constants.h"
 #include "tpm/tpm.h"
+#include "misc.h"
 
 #define SL_MAX_EVENT_DATA	64
 #define SL_TPM12_LOG_SIZE	(sizeof(struct tpm12_pcr_event) + \
@@ -298,6 +299,8 @@ void sl_main(u8 *bootparams)
 	void *txt_heap;
 	u32 data_count, os_mle_len;
 
+	debug_putstr("Entered SL main\n");
+
 	/*
 	 * Currently only Intel TXT is supported for Secure Launch. Testing
 	 * this value also indicates that the kernel was booted successfully
@@ -405,4 +408,5 @@ void sl_main(u8 *bootparams)
 
 	tpm_relinquish_locality(tpm);
 	free_tpm(tpm);
+	debug_putstr("Leaving SL main\n");
 }
