@@ -17,17 +17,12 @@
 #include <asm/bootparam.h>
 #include <asm/efi.h>
 #include <linux/slaunch.h>
-#ifdef CONFIG_SECURE_LAUNCH_SHA256
-#include <linux/sha256.h>
-#endif
-#ifdef CONFIG_SECURE_LAUNCH_SHA512
-#include <linux/sha512.h>
-#endif
 
 #include "early_sha1.h"
 #include "tpm/tpm_common.h"
 #include "tpm/tpm2_constants.h"
 #include "tpm/tpm.h"
+#include "misc.h"
 
 #define SL_MAX_EVENT_DATA	64
 #define SL_TPM12_LOG_SIZE	(sizeof(struct tpm12_pcr_event) + \
@@ -63,6 +58,12 @@ static void sl_txt_reset(u64 error)
 	sl_txt_read(TXT_CR_E2STS);
 	sl_txt_write(TXT_CR_CMD_RESET, 1);
 	asm volatile ("hlt");
+}
+
+static void sl_skinit_reset(void)
+{
+	/* TODO not sure what else to do here. Is there an error reg */
+	__asm__ __volatile__ ("ud2");
 }
 
 static u64 sl_rdmsr(u32 reg)
@@ -114,6 +115,9 @@ static void sl_find_event_log(struct tpm *tpm)
 	void *os_sinit_data;
 	void *txt_heap;
 
+	if (sl_cpu_type == SL_CPU_AMD)
+		return;
+
 	txt_heap = (void *)sl_txt_read(TXT_CR_HEAP_BASE);
 
 	os_mle_data = txt_os_mle_data_start(txt_heap);
@@ -142,6 +146,9 @@ static void sl_tpm12_log_event(u32 pcr, u8 *digest,
 	u32 total_size;
 	u8 log_buf[SL_TPM12_LOG_SIZE];
 
+	if (sl_cpu_type == SL_CPU_AMD)
+		return;
+
 	memset(log_buf, 0, SL_TPM12_LOG_SIZE);
 	pcr_event = (struct tpm12_pcr_event *)log_buf;
 	pcr_event->pcr_index = pcr;
@@ -154,7 +161,7 @@ static void sl_tpm12_log_event(u32 pcr, u8 *digest,
 	total_size = sizeof(struct tpm12_pcr_event) + event_size;
 
 	if (tpm12_log_event(evtlog_base, total_size, pcr_event))
-		sl_txt_reset(SL_ERROR_TPM_LOGGING_FAILED);
+		sl_txt_reset(SL_ERROR_TPM_EXTEND);
 }
 
 static void sl_tpm20_log_event(u32 pcr, u8 *digest, u16 algo,
@@ -167,6 +174,9 @@ static void sl_tpm20_log_event(u32 pcr, u8 *digest, u16 algo,
 	u8 *dptr;
 	u32 total_size;
 	u8 log_buf[SL_TPM20_LOG_SIZE];
+
+	if (sl_cpu_type == SL_CPU_AMD)
+		return;
 
 	memset(log_buf, 0, SL_TPM20_LOG_SIZE);
 	head = (struct tpm20_pcr_event_head *)log_buf;
@@ -230,8 +240,12 @@ void sl_tpm_extend_pcr(struct tpm *tpm, u32 pcr, const u8 *data, u32 length,
 					   TPM_ALG_SHA256,
 					   (const u8 *)desc, strlen(desc));
 			return;
-		} else
-			sl_txt_reset(SL_ERROR_TPM_EXTEND);
+		} else {
+			if (sl_cpu_type == SL_CPU_INTEL)
+				sl_txt_reset(SL_ERROR_TPM_EXTEND);
+			else
+				sl_skinit_reset();
+		}
 #endif
 #ifdef CONFIG_SECURE_LAUNCH_SHA512
 		struct sha512_state sctx = {0};
@@ -246,8 +260,12 @@ void sl_tpm_extend_pcr(struct tpm *tpm, u32 pcr, const u8 *data, u32 length,
 					   TPM_ALG_SHA512,
 					   (const u8 *)desc, strlen(desc));
 			return;
-		} else
-			sl_txt_reset(SL_ERROR_TPM_EXTEND);
+		} else {
+			if (sl_cpu_type == SL_CPU_INTEL)
+				sl_txt_reset(SL_ERROR_TPM_EXTEND);
+			else
+				sl_skinit_reset();
+		}
 #endif
 	}
 
@@ -255,8 +273,12 @@ void sl_tpm_extend_pcr(struct tpm *tpm, u32 pcr, const u8 *data, u32 length,
 	early_sha1_update(&sctx, data, length);
 	early_sha1_final(&sctx, &sha1_hash[0]);
 	ret = tpm_extend_pcr(tpm, pcr, TPM_ALG_SHA1, &sha1_hash[0]);
-	if (ret)
-		sl_txt_reset(SL_ERROR_TPM_EXTEND);
+	if (ret) {
+		if (sl_cpu_type == SL_CPU_INTEL)
+			sl_txt_reset(SL_ERROR_TPM_EXTEND);
+		else
+			sl_skinit_reset();
+	}
 
 	if (tpm->family == TPM20)
 		sl_tpm20_log_event(pcr, &sha1_hash[0], TPM_ALG_SHA1,
@@ -277,31 +299,39 @@ void sl_main(u8 *bootparams)
 	void *txt_heap;
 	u32 data_count, os_mle_len;
 
+	debug_putstr("Entered SL main\n");
+
 	/*
 	 * Currently only Intel TXT is supported for Secure Launch. Testing
 	 * this value also indicates that the kernel was booted successfully
 	 * through the Secure Launch entry point and is in SMX mode.
 	 */
+	/*
 	if (!(sl_cpu_type & SL_CPU_INTEL))
 		return;
+	*/
 
 	/*
 	 * If enable_tpm fails there is no point going on. The entire secure
 	 * environment depends on this and the other TPM operations succeeding.
 	 */
 	tpm = enable_tpm();
-	if (!tpm)
-		sl_txt_reset(SL_ERROR_TPM_INIT);
+	if (!tpm) {
+		if (sl_cpu_type == SL_CPU_INTEL)
+			sl_txt_reset(SL_ERROR_TPM_INIT);
+		else
+			sl_skinit_reset();
+	}
 
 	/* Locate the TPM event log. */
 	sl_find_event_log(tpm);
 
-	/*
-	 * Locality 2 is being opened so that the DRTM PCRs can be updated,
-	 * specifically 17 and 18.
-	 */
-	if (tpm_request_locality(tpm, 2) == TPM_NO_LOCALITY)
-		sl_txt_reset(SL_ERROR_TPM_GET_LOC);
+	if (tpm_request_locality(tpm, 2) == TPM_NO_LOCALITY) {
+		if (sl_cpu_type == SL_CPU_INTEL)
+			sl_txt_reset(SL_ERROR_TPM_INIT);
+		else
+			sl_skinit_reset();
+	}
 
 	/* Measure the zero page/boot params */
 	sl_tpm_extend_pcr(tpm, SL_CONFIG_PCR18, bootparams, PAGE_SIZE,
@@ -352,27 +382,31 @@ void sl_main(u8 *bootparams)
 				  bp->hdr.ramdisk_size,
 				  "Measured initramfs into PCR17");
 
-	/*
-	 * Some extra work to do on Intel, have to measure the OS-MLE
-	 * heap area.
-	 */
-	txt_heap = (void *)sl_txt_read(TXT_CR_HEAP_BASE);
-	os_mle_data = txt_os_mle_data_start(txt_heap);
+	if (sl_cpu_type == SL_CPU_INTEL) {
+		/*
+		* Some extra work to do on Intel, have to measure the OS-MLE
+		* heap area.
+		*/
+		txt_heap = (void *)sl_txt_read(TXT_CR_HEAP_BASE);
+		os_mle_data = txt_os_mle_data_start(txt_heap);
 
-	/*
-	 * Measure OS-MLE data up to the MLE scratch field. The MLE scratch
-	 * field and the TPM logging should not be measured.
-	 */
-	os_mle_len = offsetof(struct txt_os_mle_data, mle_scratch);
-	sl_tpm_extend_pcr(tpm, SL_CONFIG_PCR18, (u8 *)os_mle_data, os_mle_len,
-			  "Measured TXT OS-MLE data into PCR18");
+		/*
+		* Measure OS-MLE data up to the MLE scratch field. The MLE
+		* scratch field and the TPM logging should not be measured.
+		*/
+		os_mle_len = offsetof(struct txt_os_mle_data, mle_scratch);
+		sl_tpm_extend_pcr(tpm, SL_CONFIG_PCR18, (u8 *)os_mle_data,
+				  os_mle_len,
+				  "Measured TXT OS-MLE data into PCR18");
 
-	/*
-	 * Now that the OS-MLE data is measured, ensure the MTRR and
-	 * misc enable MSRs are what we expect.
-	 */
-	sl_txt_validate_msrs(os_mle_data);
+		/*
+		* Now that the OS-MLE data is measured, ensure the MTRR and
+		* misc enable MSRs are what we expect.
+		*/
+		sl_txt_validate_msrs(os_mle_data);
+	}
 
 	tpm_relinquish_locality(tpm);
 	free_tpm(tpm);
+	debug_putstr("Leaving SL main\n");
 }

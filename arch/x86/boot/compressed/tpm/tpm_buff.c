@@ -7,6 +7,7 @@
  *
  */
 
+#include <linux/string.h>
 #include <linux/types.h>
 #include "tpm.h"
 #include "tpmbuff.h"
